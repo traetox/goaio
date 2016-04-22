@@ -438,6 +438,27 @@ func (a *AIO) Ack(id RequestId) error {
 	return ErrNotDone
 }
 
+//Flush will wait for all submitted jobs to finish and then flush
+//the file descriptor.  Because the Linux kernel does not actually
+//support Flush via the AIO interface we just issue a plain old flush
+//via userland.  No async here.  Flush DOES NOT ack outstanding requests
+func (a *AIO) Flush() error {
+	a.mtx.Lock()
+	defer a.mtx.Unlock()
+	if err := a.waitAll(); err != nil {
+		return err
+	}
+	return a.f.Sync()
+}
+
+//Fd hands back the underlying *os.File pointer
+//This is NOT A COPY, so do not do close or do anything
+//crazy with it.  This is purely a convienence method, use
+//at your own peril
+func (a *AIO) FD() *os.File {
+	return a.f
+}
+
 func errLookup(errno syscall.Errno) error {
 	return errors.New(errno.Error())
 }

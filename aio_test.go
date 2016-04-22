@@ -91,6 +91,36 @@ func TestWriteAt(t *testing.T) {
 
 	clean(t)
 }
+
+func TestFlush(t *testing.T) {
+	bb := make([]byte, testBuffSize)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range bb {
+		bb[i] = 0xab
+	}
+
+	id, err := a.Write(bb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.Ack(id); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	clean(t)
+}
+
 func TestWriteMulti(t *testing.T) {
 	bb := make([]byte, testBuffSize)
 	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
