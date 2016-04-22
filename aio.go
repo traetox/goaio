@@ -48,9 +48,10 @@ type RequestId uint
 type aio_context uint
 
 type activeEvent struct {
-	data []byte
-	cb   *aiocb
-	id   RequestId
+	data    []byte
+	written uint
+	cb      *aiocb
+	id      RequestId
 }
 
 type timespec struct {
@@ -175,7 +176,8 @@ func (a *AIO) verifyResult(evnt event) error {
 	//ok, we have an active event returned and its one we are tracking
 	//ensure it wrote our entire buffer
 	if uint(len(ae.data)) != evnt.res {
-		if err := a.resubmit(ae, evnt.res); err != nil {
+		ae.written += evnt.res
+		if err := a.resubmit(ae, ae.written); err != nil {
 			return err
 		}
 		return nil //chunk went back in, so don't clear anything
