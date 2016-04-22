@@ -71,7 +71,7 @@ type AIO struct {
 	mtx *sync.Mutex
 	end int64
 	//tracker with keys and pointers to prevent GC taking our buffer
-	active   map[*aiocb](activeEvent)
+	active   map[*aiocb](*activeEvent)
 	avail    map[*aiocb]bool
 	requests map[RequestId]*requestState
 	reqId    RequestId
@@ -119,7 +119,7 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 		evt:      evts,
 		mtx:      &sync.Mutex{},
 		end:      end,
-		active:   make(map[*aiocb](activeEvent), maxRequests),
+		active:   make(map[*aiocb](*activeEvent), maxRequests),
 		avail:    availPool,
 		requests: make(map[RequestId]*requestState, 8),
 	}, err
@@ -146,6 +146,20 @@ func (a *AIO) Close() error {
 	return ErrDestroy
 }
 
+//resubmit puts a request back into the kernel
+//this is done when a partial read or write occurs
+func (a *AIO) resubmit(ae *activeEvent, completedLen uint) error {
+	//double check we are not about to roll outside our buffer
+	if completedLen >= uint(len(ae.data)) {
+		return ErrCompletion
+	}
+	toProcess := uint(len(ae.data)) - completedLen
+	ae.cb.offset = ae.cb.offset + int64(completedLen)
+	ae.cb.buffer = unsafe.Pointer(&ae.data[completedLen])
+	ae.cb.nbytes = uint64(toProcess)
+	return a.submit(ae.cb)
+}
+
 //verifyResult checks that a retuned event is for a valid request
 func (a *AIO) verifyResult(evnt event) error {
 	if evnt.cb == nil {
@@ -161,8 +175,12 @@ func (a *AIO) verifyResult(evnt event) error {
 	//ok, we have an active event returned and its one we are tracking
 	//ensure it wrote our entire buffer
 	if uint(len(ae.data)) != evnt.res {
-		return ErrCompletion
+		if err := a.resubmit(ae, evnt.res); err != nil {
+			return err
+		}
+		return nil //chunk went back in, so don't clear anything
 	}
+
 	//the result is all good, delete the item from the active list
 	delete(a.active, evnt.cb)
 
@@ -348,7 +366,7 @@ func (a *AIO) writeAt(b []byte, offset int64) (RequestId, error) {
 	}
 	a.reqId++
 	//add the cb to the active event buffer
-	a.active[cbp] = activeEvent{
+	a.active[cbp] = &activeEvent{
 		data: b, //this prevents the GC from collecting the buffer
 		cb:   cbp,
 		id:   a.reqId,
@@ -386,7 +404,7 @@ func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
 	}
 	a.reqId++
 	//add the cb to the active event buffer
-	a.active[cbp] = activeEvent{
+	a.active[cbp] = &activeEvent{
 		data: b, //this prevents the GC from collecting the buffer
 		cb:   cbp,
 		id:   a.reqId,

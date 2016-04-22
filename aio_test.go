@@ -10,8 +10,12 @@ import (
 )
 
 const (
-	testFile     string = `/tmp/test.txt`
+	testFile     string = `/dev/shm/test.bin`
 	testBuffSize        = 12345
+
+	KB = 1024
+	MB = 1024 * KB
+	GB = 1024 * MB
 )
 
 func TestInfo(t *testing.T) {
@@ -198,6 +202,84 @@ func TestRead(t *testing.T) {
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeBigFile(t *testing.T, sz int) {
+	bb := make([]byte, sz)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range bb {
+		bb[i] = 0xab
+	}
+	checkID, err := a.Write(bb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WaitFor(checkID); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Ack(checkID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readBigFile(t *testing.T, sz int) {
+	bb := make([]byte, sz)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkID, err := a.ReadAt(bb, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WaitFor(checkID); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Ack(checkID); err != nil {
+		t.Fatal(err)
+	}
+	for i := range bb {
+		if bb[i] != 0xab {
+			t.Fatal("invalid file content")
+		}
+	}
+
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestBig(t *testing.T) {
+	if testing.Short() {
+		return
+	}
+	writeBigFile(t, 8*MB)
+	readBigFile(t, 8*MB)
+	clean(t)
+}
+
+func TestBigger(t *testing.T) {
+	if testing.Short() {
+		return
+	}
+	writeBigFile(t, 128*MB)
+	readBigFile(t, 128*MB)
+	clean(t)
+}
+
+func TestBiggest(t *testing.T) {
+	if testing.Short() {
+		return
+	}
+	writeBigFile(t, 1*GB)
+	readBigFile(t, 1*GB)
+	clean(t)
 }
 
 func TestClean(t *testing.T) {
