@@ -3,15 +3,18 @@ package goaio
 import (
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"testing"
-	"time"
 	"unsafe"
 )
 
 const (
-	testFile     string = `/dev/shm/test.bin`
-	testBuffSize        = 12345
+	testFile              string = `/dev/shm/test.bin`
+	testBuffSize                 = 12345
+	brutalTestWorkerCount        = 32
+	brutalRequestCount           = 4096
+	workerBlockSize              = 2 * MB
 
 	KB = 1024
 	MB = 1024 * KB
@@ -161,37 +164,6 @@ func TestWriteMulti(t *testing.T) {
 	clean(t)
 }
 
-func TestDone(t *testing.T) {
-	bb := make([]byte, testBuffSize)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range bb {
-		bb[i] = 0xab
-	}
-	checkID, err := a.Write(bb)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = a.Done(checkID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(100 * time.Millisecond)
-	done, err := a.Done(checkID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !done {
-		t.Fatal("not done")
-	}
-	if err := a.Close(); err != nil {
-		t.Fatal(err)
-	}
-	clean(t)
-}
-
 func TestRead(t *testing.T) {
 	bb := make([]byte, testBuffSize)
 	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
@@ -232,6 +204,98 @@ func TestRead(t *testing.T) {
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writer(a *AIO, errChan chan error, reqChan chan int64) {
+	bb := make([]byte, workerBlockSize)
+	for i := range bb {
+		bb[i] = byte(i % 255)
+	}
+	for req := range reqChan {
+		checkID, err := a.WriteAt(bb, req)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		if err := a.WaitFor(checkID); err != nil {
+			errChan <- err
+			return
+		}
+		if err := a.Ack(checkID); err != nil {
+			errChan <- err
+			return
+		}
+	}
+	errChan <- nil
+}
+
+func reader(a *AIO, errChan chan error, reqChan chan int64) {
+	bb := make([]byte, workerBlockSize)
+	for req := range reqChan {
+		checkID, err := a.ReadAt(bb, req)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		if err := a.WaitFor(checkID); err != nil {
+			errChan <- err
+			return
+		}
+		if err := a.Ack(checkID); err != nil {
+			errChan <- err
+			return
+		}
+	}
+	errChan <- nil
+}
+
+func TestBrutal(t *testing.T) {
+	bb := make([]byte, 32*MB)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range bb {
+		bb[i] = 0xab
+	}
+	checkID, err := a.Write(bb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WaitFor(checkID); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Ack(checkID); err != nil {
+		t.Fatal(err)
+	}
+	errChan := make(chan error, 8)
+	reqChan := make(chan int64, brutalTestWorkerCount)
+	for i := 0; i < brutalTestWorkerCount; i++ {
+		if (i & 0x1) == 0 {
+			go reader(a, errChan, reqChan)
+		} else {
+			go writer(a, errChan, reqChan)
+		}
+	}
+
+	for i := 0; i < brutalRequestCount; i++ {
+		//check on errors
+		select {
+		case err := <-errChan:
+			t.Fatal(err)
+		case reqChan <- rand.Int63n((32 * MB) - workerBlockSize):
+		}
+	}
+	close(reqChan)
+	for i := 0; i < brutalTestWorkerCount; i++ {
+		if err := <-errChan; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	clean(t)
 }
 
 func writeBigFile(t *testing.T, sz int) {
@@ -277,7 +341,7 @@ func readBigFile(t *testing.T, sz int) {
 	}
 	for i := range bb {
 		if bb[i] != 0xab {
-			t.Fatal("invalid file content")
+			t.Fatal(fmt.Errorf("invalid file content: %x != 0xab", bb[i]))
 		}
 	}
 

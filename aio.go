@@ -65,12 +65,13 @@ type requestState struct {
 }
 
 type AIO struct {
-	f   *os.File
-	ctx aio_context
-	cbp [](*aiocb)
-	evt []event
-	mtx *sync.Mutex
-	end int64
+	f    *os.File
+	ctx  aio_context
+	cbp  [](*aiocb)
+	evt  []event
+	dmtx *sync.Mutex //the mutex protecting data
+	wmtx *sync.Mutex //the mutex protecting blocking syscalls, like wait
+	end  int64
 	//tracker with keys and pointers to prevent GC taking our buffer
 	active   map[*aiocb](*activeEvent)
 	avail    map[*aiocb]bool
@@ -118,7 +119,8 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 		ctx:      ctx,
 		cbp:      cbp,
 		evt:      evts,
-		mtx:      &sync.Mutex{},
+		dmtx:     &sync.Mutex{},
+		wmtx:     &sync.Mutex{},
 		end:      end,
 		active:   make(map[*aiocb](*activeEvent), maxRequests),
 		avail:    availPool,
@@ -128,11 +130,14 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 
 //Close up the aio object, waiting for all requests to finish first
 func (a *AIO) Close() error {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
+	a.dmtx.Lock()
 	if a.ctx == 0 || a.f == nil {
+		a.dmtx.Unlock()
 		return ErrNotInit
 	}
+	a.dmtx.Unlock()
+	a.wmtx.Lock()
+	defer a.wmtx.Unlock()
 	if err := a.waitAll(); err != nil {
 		return err
 	}
@@ -141,6 +146,7 @@ func (a *AIO) Close() error {
 	if err := a.f.Close(); err != nil {
 		return err
 	}
+	a.f = nil
 	if errno == 0 {
 		return nil
 	}
@@ -163,6 +169,8 @@ func (a *AIO) resubmit(ae *activeEvent, completedLen uint) error {
 
 //verifyResult checks that a retuned event is for a valid request
 func (a *AIO) verifyResult(evnt event) error {
+	a.dmtx.Lock()
+	defer a.dmtx.Unlock()
 	if evnt.cb == nil {
 		return ErrNilCallback
 	}
@@ -184,6 +192,8 @@ func (a *AIO) verifyResult(evnt event) error {
 	}
 
 	//the result is all good, delete the item from the active list
+	//help out the GC  abit
+	ae.data = nil
 	delete(a.active, evnt.cb)
 
 	//put the pointer back into the available pool
@@ -241,15 +251,14 @@ func (a *AIO) submit(cbp *aiocb) error {
 	if x != 1 {
 		return ErrIoSubFail
 	}
-	//add the request to our active set
 	return nil
 }
 
 //Ready returns whether or not there is a callback buffer ready to go
 //basically a check on whether or not we will block on a read/write attempt
 func (a *AIO) Ready() bool {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
+	a.dmtx.Lock()
+	defer a.dmtx.Unlock()
 	if len(a.active) == len(a.cbp) {
 		return false
 	}
@@ -258,29 +267,57 @@ func (a *AIO) Ready() bool {
 
 //Wait will block until there is an available request slot open
 func (a *AIO) Wait() error {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
-	if len(a.avail) > 0 {
+	a.dmtx.Lock()
+	l := len(a.avail)
+	a.dmtx.Unlock()
+	if l > 0 {
 		//if an available slot exists, return immediately
 		return nil
 	}
-	return a.wait(zeroTime)
+	a.wmtx.Lock()
+	err := a.wait(zeroTime)
+	a.wmtx.Unlock()
+	return err
+}
+
+func (a *AIO) idDone(id RequestId) (bool, error) {
+	a.dmtx.Lock()
+	defer a.dmtx.Unlock()
+	r, ok := a.requests[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	return r.done, nil
 }
 
 //WaitFor will block until the given RequestId is done
 func (a *AIO) WaitFor(id RequestId) error {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
 	for {
-		r, ok := a.requests[id]
-		if !ok {
-			return ErrNotFound
+		//check if its ready
+		done, err := a.idDone(id)
+		if err != nil {
+			return err
 		}
-		if r.done {
+		if done {
 			break
 		}
+
 		//wait for some completions
-		if err := a.wait(zeroTime); err != nil {
+		a.wmtx.Lock()
+		//once we grab the lock, we need to recheck
+		done, err = a.idDone(id)
+		if err != nil {
+			a.wmtx.Unlock()
+			return err
+		}
+		if done {
+			a.wmtx.Unlock()
+			break
+		}
+
+		err = a.wait(zeroTime)
+		a.wmtx.Unlock()
+		if err != nil {
 			return err
 		}
 		//retry
@@ -291,54 +328,38 @@ func (a *AIO) WaitFor(id RequestId) error {
 //getNextReady will retrieve the next available callback pointer for use
 //if no callback pointers are available, it blocks and waits for one
 func (a *AIO) getNextReady() (*aiocb, error) {
-	if len(a.avail) == 0 {
-		if err := a.wait(zeroTime); err != nil {
+	for {
+		a.dmtx.Lock()
+		for k, _ := range a.avail {
+			//remove the cb from the available pool
+			delete(a.avail, k)
+			a.dmtx.Unlock()
+			return k, nil
+		}
+		a.dmtx.Unlock()
+		a.wmtx.Lock()
+		err := a.wait(zeroTime)
+		a.wmtx.Unlock()
+		if err != nil {
 			return nil, err
 		}
 	}
-	for k, _ := range a.avail {
-		return k, nil
-	}
 	return nil, ErrWhatTheHell
-}
-
-//Done asks if a request is done
-func (a *AIO) Done(id RequestId) (bool, error) {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
-	//service any ready events without blocking
-	if err := a.wait(nonblockTimeout); err != nil {
-		return false, err
-	}
-
-	//check if the value is in the available pool
-	r, ok := a.requests[id]
-	if !ok {
-		return false, ErrNotFound
-	}
-	return r.done, nil
 }
 
 //Write will submit the bytes for writting at the end of the file,
 //the buffer CANNOT change before the write completes, this is ASYNC!
 func (a *AIO) Write(b []byte) (RequestId, error) {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
 	id, err := a.writeAt(b, a.end)
 	if err != nil {
 		return 0, err
 	}
-
-	//calculate new offset for the end of the file
-	a.end += int64(len(b))
 
 	return id, nil
 }
 
 //WriteAt will write at a specific file offset
 func (a *AIO) WriteAt(b []byte, offset int64) (RequestId, error) {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
 	id, err := a.writeAt(b, offset)
 	if err != nil {
 		return 0, err
@@ -363,31 +384,39 @@ func (a *AIO) writeAt(b []byte, offset int64) (RequestId, error) {
 	cbp.nbytes = uint64(len(b))
 	cbp.opcode = iocb_cmd_pwrite
 
+	a.dmtx.Lock()
 	if err := a.submit(cbp); err != nil {
+		a.avail[cbp] = true
+		a.dmtx.Unlock()
 		return 0, err
 	}
 	a.reqId++
+	id := a.reqId
+
 	//add the cb to the active event buffer
 	a.active[cbp] = &activeEvent{
 		data: b, //this prevents the GC from collecting the buffer
 		cb:   cbp,
-		id:   a.reqId,
+		id:   id,
 	}
-	//remove the cb from the available pool
-	delete(a.avail, cbp)
 
-	a.requests[a.reqId] = &requestState{
+	a.requests[id] = &requestState{
 		cbKey: cbp,
 		done:  false,
 	}
 
-	return a.reqId, nil
+	if a.end < (offset + int64(len(b))) {
+		//calculate new offset for the end of the file
+		a.end += int64(len(b))
+	}
+
+	a.dmtx.Unlock()
+
+	return id, nil
 }
 
 //ReadAt reads data from the file at a specific offset
 func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
 	if len(b) <= 0 {
 		return 0, ErrInvalidBuffer
 	}
@@ -401,32 +430,38 @@ func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
 	cbp.nbytes = uint64(len(b))
 	cbp.opcode = iocb_cmd_pread
 
+	a.dmtx.Lock()
 	if err := a.submit(cbp); err != nil {
+		a.avail[cbp] = true
+		//delete the request
+		a.dmtx.Unlock()
 		return 0, err
 	}
 	a.reqId++
+	id := a.reqId
+
 	//add the cb to the active event buffer
 	a.active[cbp] = &activeEvent{
 		data: b, //this prevents the GC from collecting the buffer
 		cb:   cbp,
-		id:   a.reqId,
+		id:   id,
 	}
-	//remove the cb from the available pool
-	delete(a.avail, cbp)
 
-	a.requests[a.reqId] = &requestState{
+	a.requests[id] = &requestState{
 		cbKey: cbp,
 		done:  false,
 	}
 
-	return a.reqId, nil
+	a.dmtx.Unlock()
+
+	return id, nil
 }
 
 //Ack acknowledges that we have accepted a finished result ID
 //if the request is not done, an error is returned
 func (a *AIO) Ack(id RequestId) error {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
+	a.dmtx.Lock()
+	defer a.dmtx.Unlock()
 	st, ok := a.requests[id]
 	if !ok {
 		return ErrNotFound
@@ -443,8 +478,10 @@ func (a *AIO) Ack(id RequestId) error {
 //support Flush via the AIO interface we just issue a plain old flush
 //via userland.  No async here.  Flush DOES NOT ack outstanding requests
 func (a *AIO) Flush() error {
-	a.mtx.Lock()
-	defer a.mtx.Unlock()
+	//we want to hold the wait mutex throghout all of this
+	//this ensures we have TOTAL exclusivity over the file IO
+	a.wmtx.Lock()
+	defer a.wmtx.Unlock()
 	if err := a.waitAll(); err != nil {
 		return err
 	}
