@@ -24,6 +24,6 @@ type aiocb struct {
 type event struct {
 	data unsafe.Pointer
 	cb   *aiocb
-	res  uint
-	res2 uint
+	res  int
+	res2 int
 }

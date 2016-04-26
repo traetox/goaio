@@ -109,12 +109,11 @@ func TestFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if err := a.Flush(); err != nil {
+	if err := a.WaitFor(id); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := a.Ack(id); err != nil {
+	if err := a.Flush(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,9 +179,6 @@ func TestRead(t *testing.T) {
 	if err := a.WaitFor(checkID); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Ack(checkID); err != nil {
-		t.Fatal(err)
-	}
 	for i := range bb {
 		bb[i] = 0
 	}
@@ -191,9 +187,6 @@ func TestRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.WaitFor(checkID); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Ack(checkID); err != nil {
 		t.Fatal(err)
 	}
 	for i := range bb {
@@ -221,10 +214,6 @@ func writer(a *AIO, errChan chan error, reqChan chan int64) {
 			errChan <- err
 			return
 		}
-		if err := a.Ack(checkID); err != nil {
-			errChan <- err
-			return
-		}
 	}
 	errChan <- nil
 }
@@ -238,10 +227,6 @@ func reader(a *AIO, errChan chan error, reqChan chan int64) {
 			return
 		}
 		if err := a.WaitFor(checkID); err != nil {
-			errChan <- err
-			return
-		}
-		if err := a.Ack(checkID); err != nil {
 			errChan <- err
 			return
 		}
@@ -263,9 +248,6 @@ func TestBrutal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.WaitFor(checkID); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Ack(checkID); err != nil {
 		t.Fatal(err)
 	}
 	errChan := make(chan error, 8)
@@ -314,9 +296,6 @@ func writeBigFile(t *testing.T, sz int) {
 	if err := a.WaitFor(checkID); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Ack(checkID); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
@@ -334,9 +313,6 @@ func readBigFile(t *testing.T, sz int) {
 		t.Fatal(err)
 	}
 	if err := a.WaitFor(checkID); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Ack(checkID); err != nil {
 		t.Fatal(err)
 	}
 	for i := range bb {

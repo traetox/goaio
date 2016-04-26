@@ -28,8 +28,8 @@ type event struct {
 	pad  uint32
 	cb   *aiocb
 	pad2 uint32
-	res  uint
+	res  int
 	pad3 uint32
-	res2 uint
+	res2 int
 	pad4 uint32
 }

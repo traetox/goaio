@@ -4,6 +4,7 @@ package goaio
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
@@ -62,6 +63,7 @@ type timespec struct {
 type requestState struct {
 	cbKey *aiocb
 	done  bool
+	err   error
 }
 
 type AIO struct {
@@ -167,6 +169,27 @@ func (a *AIO) resubmit(ae *activeEvent, completedLen uint) error {
 	return a.submit(ae.cb)
 }
 
+//remove an active event and return its callback and io_event to the available pool
+func (a *AIO) freeEvent(ae *activeEvent, cb *aiocb, errno int) error {
+	//help out the GC  abit
+	ae.data = nil
+	delete(a.active, cb)
+
+	//put the pointer back into the available pool
+	a.avail[cb] = true
+
+	//update the state in the requests map
+	r, ok := a.requests[ae.id]
+	if !ok {
+		return ErrNotFound
+	}
+	r.done = true
+	if errno < 0 {
+		r.err = lookupErrNo(errno)
+	}
+	return nil
+}
+
 //verifyResult checks that a retuned event is for a valid request
 func (a *AIO) verifyResult(evnt event) error {
 	a.dmtx.Lock()
@@ -181,10 +204,15 @@ func (a *AIO) verifyResult(evnt event) error {
 	if ae.cb != evnt.cb {
 		return ErrInvalidEventPtr
 	}
+	if evnt.res < 0 {
+		//an error occured with this event, remove the active event and set
+		//the event error code
+		return a.freeEvent(ae, evnt.cb, evnt.res)
+	}
 	//ok, we have an active event returned and its one we are tracking
-	//ensure it wrote our entire buffer
-	if uint(len(ae.data)) != (evnt.res + ae.written) {
-		ae.written += evnt.res
+	//ensure it wrote our entire buffer.  res is > 0 at this point
+	if uint(len(ae.data)) != (uint(evnt.res) + ae.written) {
+		ae.written += uint(evnt.res)
 		if err := a.resubmit(ae, ae.written); err != nil {
 			return err
 		}
@@ -192,21 +220,7 @@ func (a *AIO) verifyResult(evnt event) error {
 	}
 
 	//the result is all good, delete the item from the active list
-	//help out the GC  abit
-	ae.data = nil
-	delete(a.active, evnt.cb)
-
-	//put the pointer back into the available pool
-	a.avail[evnt.cb] = true
-
-	//update the state in the requests map
-	r, ok := a.requests[ae.id]
-	if !ok {
-		return ErrNotFound
-	}
-	r.done = true
-
-	return nil
+	return a.freeEvent(ae, evnt.cb, 0)
 }
 
 //waitAll will block until all submitted requests are done
@@ -322,7 +336,7 @@ func (a *AIO) WaitFor(id RequestId) error {
 		}
 		//retry
 	}
-	return nil
+	return a.ack(id)
 }
 
 //getNextReady will retrieve the next available callback pointer for use
@@ -459,7 +473,7 @@ func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
 
 //Ack acknowledges that we have accepted a finished result ID
 //if the request is not done, an error is returned
-func (a *AIO) Ack(id RequestId) error {
+func (a *AIO) ack(id RequestId) error {
 	a.dmtx.Lock()
 	defer a.dmtx.Unlock()
 	st, ok := a.requests[id]
@@ -467,8 +481,9 @@ func (a *AIO) Ack(id RequestId) error {
 		return ErrNotFound
 	}
 	if st.done {
+		err := st.err
 		delete(a.requests, id)
-		return nil
+		return err
 	}
 	return ErrNotDone
 }
@@ -498,4 +513,10 @@ func (a *AIO) FD() *os.File {
 
 func errLookup(errno syscall.Errno) error {
 	return errors.New(errno.Error())
+}
+
+//translate an error code to error
+//TODO: actually populate this so the return is sane
+func lookupErrNo(errno int) error {
+	return fmt.Errorf("Error %d", errno)
 }
