@@ -511,7 +511,20 @@ func (a *AIO) Flush() error {
 	return a.f.Sync()
 }
 
-//Fd hands back the underlying *os.File pointer
+//Truncate will wait for all submitted jobs to finish and then trunctate the
+//file to the designated size.
+func (a *AIO) Truncate(sz int64) error {
+	//we want to hold the wait mutex throghout all of this
+	//this ensures we have TOTAL exclusivity over the file IO
+	a.wmtx.Lock()
+	defer a.wmtx.Unlock()
+	if err := a.waitAll(); err != nil {
+		return err
+	}
+	return a.f.Truncate(sz)
+}
+
+//FD hands back the underlying *os.File pointer
 //This is NOT A COPY, so do not do close or do anything
 //crazy with it.  This is purely a convienence method, use
 //at your own peril
