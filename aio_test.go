@@ -33,7 +33,7 @@ func TestInfo(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestNew(t *testing.T) {
 
 func TestWrite(t *testing.T) {
 	bb := make([]byte, testBuffSize)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestWrite(t *testing.T) {
 
 func TestWriteAt(t *testing.T) {
 	bb := make([]byte, testBuffSize)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestWriteAt(t *testing.T) {
 
 func TestFlush(t *testing.T) {
 	bb := make([]byte, testBuffSize)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestFlush(t *testing.T) {
 
 func TestWriteMulti(t *testing.T) {
 	bb := make([]byte, testBuffSize)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestWriteMulti(t *testing.T) {
 
 func TestRead(t *testing.T) {
 	bb := make([]byte, testBuffSize)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func reader(a *AIO, errChan chan error, reqChan chan int64) {
 
 func TestBrutal(t *testing.T) {
 	bb := make([]byte, 32*MB)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestBrutal(t *testing.T) {
 
 func writeBigFile(t *testing.T, sz int) {
 	bb := make([]byte, sz)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func writeBigFile(t *testing.T, sz int) {
 
 func readBigFile(t *testing.T, sz int) {
 	bb := make([]byte, sz)
-	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	a, err := NewAIO(testFile, 0, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}

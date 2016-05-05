@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	maxRequests     int   = 16
-	defaultPriority int16 = 1
+	maxQueueDepth     int   = 256
+	defaultQueueDepth int   = 16
+	defaultPriority   int16 = 1
 
 	iocb_cmd_pread  uint16 = 0
 	iocb_cmd_pwrite uint16 = 1
@@ -37,6 +38,7 @@ var (
 	ErrWhatTheHell       = errors.New("A callback event occurred but no buffer was put into the pool")
 	ErrNotFound          = errors.New("ID not found")
 	ErrNotDone           = errors.New("Request not finished")
+	ErrInvalidQueueDepth = errors.New("Invalid queue depth")
 
 	zeroTime        timespec
 	nonblockTimeout = timespec{
@@ -82,9 +84,15 @@ type AIO struct {
 }
 
 //NewAIO opens a file with the appropriate flags and permissions and positions the file index at the end of the file
-func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
+func NewAIO(name string, queueDepth int, flag int, perm os.FileMode) (*AIO, error) {
 	var err error
 	var ctx aio_context
+	if queueDepth <= 0 {
+		queueDepth = defaultQueueDepth
+	}
+	if queueDepth >= maxQueueDepth {
+		return nil, ErrInvalidQueueDepth
+	}
 
 	//try to open the file
 	fio, err := os.OpenFile(name, flag, perm)
@@ -101,14 +109,14 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 	end := st.Size()
 
 	//get the context up and running
-	_, _, errno := syscall.Syscall(syscall.SYS_IO_SETUP, uintptr(maxRequests), uintptr(unsafe.Pointer(&ctx)), 0)
+	_, _, errno := syscall.Syscall(syscall.SYS_IO_SETUP, uintptr(queueDepth), uintptr(unsafe.Pointer(&ctx)), 0)
 	if errno != 0 {
 		fio.Close()
 		return nil, ErrInitFail
 	}
-	availPool := make(map[*aiocb]bool, maxRequests)
-	evts := make([]event, maxRequests)
-	cbp := make([](*aiocb), maxRequests)
+	availPool := make(map[*aiocb]bool, queueDepth)
+	evts := make([]event, queueDepth)
+	cbp := make([](*aiocb), queueDepth)
 	for i := range cbp {
 		cbp[i] = &aiocb{
 			fd:   uint32(fio.Fd()),
@@ -124,7 +132,7 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 		dmtx:     &sync.Mutex{},
 		wmtx:     &sync.Mutex{},
 		end:      end,
-		active:   make(map[*aiocb](*activeEvent), maxRequests),
+		active:   make(map[*aiocb](*activeEvent), queueDepth),
 		avail:    availPool,
 		requests: make(map[RequestId]*requestState, 8),
 	}, err
