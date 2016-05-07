@@ -83,15 +83,26 @@ type AIO struct {
 	reqId    RequestId
 }
 
+type AIOExtConfig struct {
+	QueueDepth int
+}
+
 //NewAIO opens a file with the appropriate flags and permissions and positions the file index at the end of the file
-func NewAIO(name string, queueDepth int, flag int, perm os.FileMode) (*AIO, error) {
+func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
+	var cfg AIOExtConfig
+	if err := fixupConfig(&cfg); err != nil {
+		return nil, err
+	}
+	return NewAIOExt(name, cfg, flag, perm)
+}
+
+//NewAIOExt opens a file with the appropriate flags and permissions and positions the file index at the end of the file with additional configuration options
+func NewAIOExt(name string, cfg AIOExtConfig, flag int, perm os.FileMode) (*AIO, error) {
 	var err error
 	var ctx aio_context
-	if queueDepth <= 0 {
-		queueDepth = defaultQueueDepth
-	}
-	if queueDepth >= maxQueueDepth {
-		return nil, ErrInvalidQueueDepth
+
+	if err := fixupConfig(&cfg); err != nil {
+		return nil, err
 	}
 
 	//try to open the file
@@ -109,14 +120,14 @@ func NewAIO(name string, queueDepth int, flag int, perm os.FileMode) (*AIO, erro
 	end := st.Size()
 
 	//get the context up and running
-	_, _, errno := syscall.Syscall(syscall.SYS_IO_SETUP, uintptr(queueDepth), uintptr(unsafe.Pointer(&ctx)), 0)
+	_, _, errno := syscall.Syscall(syscall.SYS_IO_SETUP, uintptr(cfg.QueueDepth), uintptr(unsafe.Pointer(&ctx)), 0)
 	if errno != 0 {
 		fio.Close()
 		return nil, ErrInitFail
 	}
-	availPool := make(map[*aiocb]bool, queueDepth)
-	evts := make([]event, queueDepth)
-	cbp := make([](*aiocb), queueDepth)
+	availPool := make(map[*aiocb]bool, cfg.QueueDepth)
+	evts := make([]event, cfg.QueueDepth)
+	cbp := make([](*aiocb), cfg.QueueDepth)
 	for i := range cbp {
 		cbp[i] = &aiocb{
 			fd:   uint32(fio.Fd()),
@@ -132,7 +143,7 @@ func NewAIO(name string, queueDepth int, flag int, perm os.FileMode) (*AIO, erro
 		dmtx:     &sync.Mutex{},
 		wmtx:     &sync.Mutex{},
 		end:      end,
-		active:   make(map[*aiocb](*activeEvent), queueDepth),
+		active:   make(map[*aiocb](*activeEvent), cfg.QueueDepth),
 		avail:    availPool,
 		requests: make(map[RequestId]*requestState, 8),
 	}, err
@@ -540,4 +551,14 @@ func errLookup(errno syscall.Errno) error {
 //TODO: actually populate this so the return is sane
 func lookupErrNo(errno int) error {
 	return fmt.Errorf("Error %d", errno)
+}
+
+func fixupConfig(cfg *AIOExtConfig) error {
+	if cfg.QueueDepth <= 0 {
+		cfg.QueueDepth = defaultQueueDepth
+	}
+	if cfg.QueueDepth >= maxQueueDepth {
+		return ErrInvalidQueueDepth
+	}
+	return nil
 }
