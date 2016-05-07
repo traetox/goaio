@@ -147,6 +147,7 @@ func NewAIOExt(name string, cfg AIOExtConfig, flag int, perm os.FileMode) (*AIO,
 		active:   make(map[*aiocb](*activeEvent), cfg.QueueDepth),
 		avail:    availPool,
 		requests: make(map[RequestId]*requestState, 8),
+		reqId:    1, //ID should start counting at 1 so callers can use 0 as "not in use"
 	}, err
 }
 
