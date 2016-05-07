@@ -1,6 +1,7 @@
 package goaio
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -109,8 +110,12 @@ func TestFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WaitFor(id); err != nil {
+	n, err := a.WaitFor(id)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != len(bb) {
+		t.Fatal("Short byte count")
 	}
 
 	if err := a.Flush(); err != nil {
@@ -176,8 +181,12 @@ func TestRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WaitFor(checkID); err != nil {
+	n, err := a.WaitFor(checkID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != len(bb) {
+		t.Fatal("Short byte count")
 	}
 	for i := range bb {
 		bb[i] = 0
@@ -186,8 +195,12 @@ func TestRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WaitFor(checkID); err != nil {
+	n, err = a.WaitFor(checkID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != len(bb) {
+		t.Fatal("Short byte count")
 	}
 	for i := range bb {
 		if bb[i] != 0xab {
@@ -210,8 +223,13 @@ func writer(a *AIO, errChan chan error, reqChan chan int64) {
 			errChan <- err
 			return
 		}
-		if err := a.WaitFor(checkID); err != nil {
+		n, err := a.WaitFor(checkID)
+		if err != nil {
 			errChan <- err
+			return
+		}
+		if n != len(bb) {
+			errChan <- errors.New("Short byte count")
 			return
 		}
 	}
@@ -226,8 +244,13 @@ func reader(a *AIO, errChan chan error, reqChan chan int64) {
 			errChan <- err
 			return
 		}
-		if err := a.WaitFor(checkID); err != nil {
+		n, err := a.WaitFor(checkID)
+		if err != nil {
 			errChan <- err
+			return
+		}
+		if n != len(bb) {
+			errChan <- errors.New("Short byte count")
 			return
 		}
 	}
@@ -247,8 +270,12 @@ func TestBrutal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WaitFor(checkID); err != nil {
+	n, err := a.WaitFor(checkID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != len(bb) {
+		t.Fatal("Short byte count")
 	}
 	errChan := make(chan error, 8)
 	reqChan := make(chan int64, brutalTestWorkerCount)
@@ -293,8 +320,12 @@ func writeBigFile(t *testing.T, sz int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WaitFor(checkID); err != nil {
+	n, err := a.WaitFor(checkID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != len(bb) {
+		t.Fatal("Short byte count")
 	}
 
 	if err := a.Close(); err != nil {
@@ -312,8 +343,12 @@ func readBigFile(t *testing.T, sz int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WaitFor(checkID); err != nil {
+	n, err := a.WaitFor(checkID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != len(bb) {
+		t.Fatal("Short byte count")
 	}
 	for i := range bb {
 		if bb[i] != 0xab {

@@ -63,9 +63,10 @@ type timespec struct {
 }
 
 type requestState struct {
-	cbKey *aiocb
-	done  bool
-	err   error
+	cbKey     *aiocb
+	done      bool
+	err       error
+	byteCount int
 }
 
 type AIO struct {
@@ -176,14 +177,14 @@ func (a *AIO) Close() error {
 
 //resubmit puts a request back into the kernel
 //this is done when a partial read or write occurs
-func (a *AIO) resubmit(ae *activeEvent, completedLen uint) error {
+func (a *AIO) resubmit(ae *activeEvent) error {
 	//double check we are not about to roll outside our buffer
-	if completedLen >= uint(len(ae.data)) {
+	if ae.written >= uint(len(ae.data)) {
 		return ErrCompletion
 	}
-	toProcess := uint(len(ae.data)) - completedLen
-	ae.cb.offset = ae.cb.offset + int64(completedLen)
-	ae.cb.buffer = unsafe.Pointer(&ae.data[completedLen])
+	toProcess := uint(len(ae.data)) - ae.written
+	ae.cb.offset = ae.cb.offset + int64(ae.written)
+	ae.cb.buffer = unsafe.Pointer(&ae.data[ae.written])
 	ae.cb.nbytes = uint64(toProcess)
 	return a.submit(ae.cb)
 }
@@ -203,6 +204,7 @@ func (a *AIO) freeEvent(ae *activeEvent, cb *aiocb, errno int) error {
 		return ErrNotFound
 	}
 	r.done = true
+	r.byteCount = int(ae.written)
 	if errno < 0 {
 		r.err = lookupErrNo(errno)
 	}
@@ -232,11 +234,12 @@ func (a *AIO) verifyResult(evnt event) error {
 	//ensure it wrote our entire buffer.  res is > 0 at this point
 	if uint(len(ae.data)) != (uint(evnt.res) + ae.written) {
 		ae.written += uint(evnt.res)
-		if err := a.resubmit(ae, ae.written); err != nil {
+		if err := a.resubmit(ae); err != nil {
 			return err
 		}
 		return nil //chunk went back in, so don't clear anything
 	}
+	ae.written += uint(evnt.res)
 
 	//the result is all good, delete the item from the active list
 	return a.freeEvent(ae, evnt.cb, 0)
@@ -324,12 +327,12 @@ func (a *AIO) idDone(id RequestId) (bool, error) {
 }
 
 //WaitFor will block until the given RequestId is done
-func (a *AIO) WaitFor(id RequestId) error {
+func (a *AIO) WaitFor(id RequestId) (int, error) {
 	for {
 		//check if its ready
 		done, err := a.idDone(id)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if done {
 			break
@@ -341,7 +344,7 @@ func (a *AIO) WaitFor(id RequestId) error {
 		done, err = a.idDone(id)
 		if err != nil {
 			a.wmtx.Unlock()
-			return err
+			return 0, err
 		}
 		if done {
 			a.wmtx.Unlock()
@@ -351,7 +354,7 @@ func (a *AIO) WaitFor(id RequestId) error {
 		err = a.wait(zeroTime)
 		a.wmtx.Unlock()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		//retry
 	}
@@ -492,19 +495,20 @@ func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
 
 //Ack acknowledges that we have accepted a finished result ID
 //if the request is not done, an error is returned
-func (a *AIO) ack(id RequestId) error {
+func (a *AIO) ack(id RequestId) (int, error) {
 	a.dmtx.Lock()
 	defer a.dmtx.Unlock()
 	st, ok := a.requests[id]
 	if !ok {
-		return ErrNotFound
+		return 0, ErrNotFound
 	}
 	if st.done {
 		err := st.err
+		cnt := st.byteCount
 		delete(a.requests, id)
-		return err
+		return cnt, err
 	}
-	return ErrNotDone
+	return 0, ErrNotDone
 }
 
 //Flush will wait for all submitted jobs to finish and then flush
