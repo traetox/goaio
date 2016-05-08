@@ -233,7 +233,7 @@ func (a *AIO) verifyResult(evnt event) error {
 	}
 	//ok, we have an active event returned and its one we are tracking
 	//ensure it wrote our entire buffer.  res is > 0 at this point
-	if uint(len(ae.data)) != (uint(evnt.res) + ae.written) {
+	if evnt.res > 0 && uint(len(ae.data)) != (uint(evnt.res)+ae.written) {
 		ae.written += uint(evnt.res)
 		if err := a.resubmit(ae); err != nil {
 			return err

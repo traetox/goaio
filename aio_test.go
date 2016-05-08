@@ -212,6 +212,37 @@ func TestRead(t *testing.T) {
 	}
 }
 
+func TestShortRead(t *testing.T) {
+	testData := []byte("HELLO MY FRIENDS")
+	if err := ioutil.WriteFile(testFile, testData, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	bb := make([]byte, testBuffSize)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkID, err := a.ReadAt(bb, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := a.WaitFor(checkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != len(testData) {
+		t.Fatal("Failed on short read")
+	}
+
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+}
+
 func writer(a *AIO, errChan chan error, reqChan chan int64) {
 	bb := make([]byte, workerBlockSize)
 	for i := range bb {
