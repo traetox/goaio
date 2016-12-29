@@ -213,7 +213,7 @@ func (a *AIO) freeEvent(ae *activeEvent, cb *aiocb, errno int) error {
 }
 
 //verifyResult checks that a retuned event is for a valid request
-func (a *AIO) verifyResult(evnt event) error {
+func (a *AIO) verifyResult(evnt event, compLen *int, completed []RequestId) error {
 	a.dmtx.Lock()
 	defer a.dmtx.Unlock()
 	if evnt.cb == nil {
@@ -242,14 +242,18 @@ func (a *AIO) verifyResult(evnt event) error {
 	}
 	ae.written += uint(evnt.res)
 
-	//the result is all good, delete the item from the active list
+	//the result is all good, increment the compLen and delete the item from the active list
+	if *compLen < len(completed) {
+		completed[*compLen] = ae.id
+	}
+	(*compLen)++
 	return a.freeEvent(ae, evnt.cb, 0)
 }
 
 //waitAll will block until all submitted requests are done
 func (a *AIO) waitAll() error {
 	for len(a.active) > 0 {
-		if err := a.wait(zeroTime); err != nil {
+		if _, err := a.wait(zeroTime, nil); err != nil {
 			return err
 		}
 	}
@@ -257,26 +261,30 @@ func (a *AIO) waitAll() error {
 }
 
 //wait until SOMETHING comes back
-func (a *AIO) wait(to timespec) error {
+func (a *AIO) wait(to timespec, completed []RequestId) (int, error) {
+	var compLen int
 	if len(a.active) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	//wait for at least one active request to complete
 	x, _, ret := syscall.Syscall6(syscall.SYS_IO_GETEVENTS, uintptr(a.ctx), uintptr(1), uintptr(len(a.active)), uintptr(unsafe.Pointer(&a.evt[0])), uintptr(unsafe.Pointer(&to)), uintptr(0))
 	if ret != 0 {
-		return errLookup(ret)
+		return 0, errLookup(ret)
 	}
 	if x == uintptr(0) || x > uintptr(len(a.active)) {
-		return ErrWaitAllFailed
+		return 0, ErrWaitAllFailed
 	}
 	var err error
 	for i := uintptr(0); i < x; i++ {
-		if e := a.verifyResult(a.evt[i]); e != nil {
-			err = e
+		//we pass in our completed slice and the length pointer to be populated
+		if e := a.verifyResult(a.evt[i], &compLen, completed); e != nil {
+			if err == nil {
+				err = e
+			}
 		}
 	}
-	return err
+	return compLen, err
 }
 
 //submit sends a block of data out to be read or written
@@ -312,9 +320,27 @@ func (a *AIO) Wait() error {
 		return nil
 	}
 	a.wmtx.Lock()
-	err := a.wait(zeroTime)
+	_, err := a.wait(zeroTime, nil)
 	a.wmtx.Unlock()
 	return err
+}
+
+//WaitAny will block until a request finishes and will populate a
+//buffer of request IDs with the items that finish, returning the completion
+//count and a potential error.  If there are no outstanding requests it will
+//return 0, nil
+func (a *AIO) WaitAny(completed []RequestId) (int, error) {
+	a.dmtx.Lock()
+	l := len(a.active)
+	a.dmtx.Unlock()
+	if l == 0 {
+		//no active requests, bail
+		return 0, nil
+	}
+	a.wmtx.Lock()
+	n, err := a.wait(zeroTime, completed)
+	a.wmtx.Unlock()
+	return n, err
 }
 
 func (a *AIO) idDone(id RequestId) (bool, error) {
@@ -352,7 +378,7 @@ func (a *AIO) WaitFor(id RequestId) (int, error) {
 			break
 		}
 
-		err = a.wait(zeroTime)
+		_, err = a.wait(zeroTime, nil)
 		a.wmtx.Unlock()
 		if err != nil {
 			return 0, err
@@ -375,7 +401,7 @@ func (a *AIO) getNextReady() (*aiocb, error) {
 		}
 		a.dmtx.Unlock()
 		a.wmtx.Lock()
-		err := a.wait(zeroTime)
+		_, err := a.wait(zeroTime, nil)
 		a.wmtx.Unlock()
 		if err != nil {
 			return nil, err

@@ -15,6 +15,7 @@ const (
 	testBuffSize                 = 12345
 	brutalTestWorkerCount        = 32
 	brutalRequestCount           = 4096
+	waitAnyWriteCount            = defaultQueueDepth
 	workerBlockSize              = 2 * MB
 
 	KB = 1024
@@ -331,6 +332,96 @@ func TestBrutal(t *testing.T) {
 		if err := <-errChan; err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	clean(t)
+}
+
+func removeIdFromList(id RequestId, ids []RequestId) []RequestId {
+	for i := range ids {
+		if ids[i] == id {
+			ids[i] = ids[len(ids)-1]
+			return ids[:len(ids)-1]
+		}
+	}
+	return ids
+}
+
+func TestWaitAny(t *testing.T) {
+	var ids []RequestId
+	bb := make([]byte, MB)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range bb {
+		bb[i] = byte(i & 0xff)
+	}
+
+	for i := 0; i < waitAnyWriteCount; i++ {
+		checkID, err := a.Write(bb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, checkID)
+	}
+
+	toWait := len(ids)
+	waitIdList := make([]RequestId, len(ids))
+	for toWait > 0 {
+		n, err := a.WaitAny(waitIdList)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n > toWait {
+			t.Fatal("More returned than possible on wait any")
+		}
+		toWait -= n
+		for i := 0; i < n; i++ {
+			ids = removeIdFromList(waitIdList[i], ids)
+		}
+	}
+	if len(ids) > 0 {
+		t.Fatal("not all ids were completed by WaitAny")
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	clean(t)
+}
+
+func TestWaitAnyShortList(t *testing.T) {
+	var ids []RequestId
+	bb := make([]byte, MB)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range bb {
+		bb[i] = byte(i & 0xff)
+	}
+
+	for i := 0; i < waitAnyWriteCount; i++ {
+		checkID, err := a.Write(bb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, checkID)
+	}
+
+	toWait := len(ids)
+	waitIdList := make([]RequestId, 4)
+	for toWait > 0 {
+		n, err := a.WaitAny(waitIdList)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n > toWait {
+			t.Fatal("More returned than possible on wait any")
+		}
+		toWait -= n
 	}
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
