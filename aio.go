@@ -88,6 +88,16 @@ type AIOExtConfig struct {
 	QueueDepth int
 }
 
+//Create is shorthand for NewAIO(name, O_RDWR|O_CREATE|O_TRUNC, 0660)
+func Create(name string) (*AIO, error) {
+	return NewAIO(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0660)
+}
+
+//Open is shorthand for NewAIO(name, O_RDONLY, 0)
+func Open(name string) (*AIO, error) {
+	return NewAIO(name, os.O_RDONLY, 0)
+}
+
 //NewAIO opens a file with the appropriate flags and permissions and positions the file index at the end of the file
 func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 	var cfg AIOExtConfig
