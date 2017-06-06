@@ -518,3 +518,56 @@ func clean(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func Example() {
+	bb := make([]byte, testBuffSize)
+	a, err := NewAIO(testFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		fmt.Println("Failed to create AIO", err)
+	}
+	for i := range bb {
+		bb[i] = 0xab
+	}
+
+	var requests []RequestId
+	//kick off 16 requests to write to the file
+	//this should generate a file of testBuffSize*16
+	for i := 0; i < 16; i++ {
+		r, err := a.Write(bb)
+		if err != nil {
+			fmt.Println("Failure to issue write", err)
+			return
+		}
+		requests = append(requests, r)
+	}
+
+	//wait for the first 8 requests to finish in order
+	for i := 0; i < 8; i++ {
+		if _, err := a.WaitFor(requests[i]); err != nil {
+			fmt.Println("Failed waiting for write request", err)
+			return
+		}
+	}
+
+	//wait for the next 8 requests to finish in any order
+	//this is a batch wait, several can come back
+	completed := make([]RequestId, 8)
+	toComplete := 8
+	for toComplete > 0 {
+		n, err := a.WaitAny(completed)
+		if err != nil {
+			fmt.Println("Failed to wait for any write requests", err)
+			return
+		}
+		toComplete -= n
+	}
+
+	//flush the file handle the AIO for good measure
+	if err := a.Flush(); err != nil {
+		fmt.Println("Failed to sync AIO")
+	}
+
+	if err := a.Close(); err != nil {
+		fmt.Println("Failed to close AIO")
+	}
+}

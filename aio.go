@@ -88,17 +88,17 @@ type AIOExtConfig struct {
 	QueueDepth int
 }
 
-//Create is shorthand for NewAIO(name, O_RDWR|O_CREATE|O_TRUNC, 0660)
+// Create is shorthand for NewAIO(name, O_RDWR|O_CREATE|O_TRUNC, 0660)
 func Create(name string) (*AIO, error) {
 	return NewAIO(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0660)
 }
 
-//Open is shorthand for NewAIO(name, O_RDONLY, 0)
+// Open is shorthand for NewAIO(name, O_RDONLY, 0)
 func Open(name string) (*AIO, error) {
 	return NewAIO(name, os.O_RDONLY, 0)
 }
 
-//NewAIO opens a file with the appropriate flags and permissions and positions the file index at the end of the file
+// NewAIO opens a file with the appropriate flags and permissions and positions the file index at the end of the file
 func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 	var cfg AIOExtConfig
 	if err := fixupConfig(&cfg); err != nil {
@@ -107,7 +107,7 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 	return NewAIOExt(name, cfg, flag, perm)
 }
 
-//NewAIOExt opens a file with the appropriate flags and permissions and positions the file index at the end of the file with additional configuration options
+// NewAIOExt opens a file with the appropriate flags and permissions and positions the file index at the end of the file with additional configuration options
 func NewAIOExt(name string, cfg AIOExtConfig, flag int, perm os.FileMode) (*AIO, error) {
 	var err error
 	var ctx aio_context
@@ -161,7 +161,7 @@ func NewAIOExt(name string, cfg AIOExtConfig, flag int, perm os.FileMode) (*AIO,
 	}, err
 }
 
-//Close up the aio object, waiting for all requests to finish first
+// Close up the aio object, waiting for all requests to finish first
 func (a *AIO) Close() error {
 	a.dmtx.Lock()
 	if a.ctx == 0 || a.f == nil {
@@ -186,8 +186,8 @@ func (a *AIO) Close() error {
 	return ErrDestroy
 }
 
-//resubmit puts a request back into the kernel
-//this is done when a partial read or write occurs
+// resubmit puts a request back into the kernel
+// this is done when a partial read or write occurs
 func (a *AIO) resubmit(ae *activeEvent) error {
 	//double check we are not about to roll outside our buffer
 	if ae.written >= uint(len(ae.data)) {
@@ -200,7 +200,7 @@ func (a *AIO) resubmit(ae *activeEvent) error {
 	return a.submit(ae.cb)
 }
 
-//remove an active event and return its callback and io_event to the available pool
+// freeEvent removes an active event and return its callback and io_event to the available pool
 func (a *AIO) freeEvent(ae *activeEvent, cb *aiocb, errno int) error {
 	//help out the GC  abit
 	ae.data = nil
@@ -222,7 +222,7 @@ func (a *AIO) freeEvent(ae *activeEvent, cb *aiocb, errno int) error {
 	return nil
 }
 
-//verifyResult checks that a retuned event is for a valid request
+// verifyResult checks that a retuned event is for a valid request
 func (a *AIO) verifyResult(evnt event, compLen *int, completed []RequestId) error {
 	a.dmtx.Lock()
 	defer a.dmtx.Unlock()
@@ -260,7 +260,7 @@ func (a *AIO) verifyResult(evnt event, compLen *int, completed []RequestId) erro
 	return a.freeEvent(ae, evnt.cb, 0)
 }
 
-//waitAll will block until all submitted requests are done
+// waitAll will block until all submitted requests are done
 func (a *AIO) waitAll() error {
 	for len(a.active) > 0 {
 		if _, err := a.wait(zeroTime, nil); err != nil {
@@ -270,7 +270,7 @@ func (a *AIO) waitAll() error {
 	return nil
 }
 
-//wait until SOMETHING comes back
+// wait until SOMETHING comes back
 func (a *AIO) wait(to timespec, completed []RequestId) (int, error) {
 	var compLen int
 	if len(a.active) == 0 {
@@ -297,7 +297,7 @@ func (a *AIO) wait(to timespec, completed []RequestId) (int, error) {
 	return compLen, err
 }
 
-//submit sends a block of data out to be read or written
+// submit sends a block of data out to be read or written
 func (a *AIO) submit(cbp *aiocb) error {
 	x, _, ret := syscall.Syscall(syscall.SYS_IO_SUBMIT, uintptr(a.ctx), 1, uintptr(unsafe.Pointer(&cbp)))
 	if ret != 0 {
@@ -309,8 +309,8 @@ func (a *AIO) submit(cbp *aiocb) error {
 	return nil
 }
 
-//Ready returns whether or not there is a callback buffer ready to go
-//basically a check on whether or not we will block on a read/write attempt
+// Ready returns whether or not there is a callback buffer ready to go
+// basically a check on whether or not we will block on a read/write attempt
 func (a *AIO) Ready() bool {
 	a.dmtx.Lock()
 	defer a.dmtx.Unlock()
@@ -320,7 +320,7 @@ func (a *AIO) Ready() bool {
 	return true
 }
 
-//Wait will block until there is an available request slot open
+// Wait will block until there is an available request slot open
 func (a *AIO) Wait() error {
 	a.dmtx.Lock()
 	l := len(a.avail)
@@ -335,10 +335,11 @@ func (a *AIO) Wait() error {
 	return err
 }
 
-//WaitAny will block until a request finishes and will populate a
-//buffer of request IDs with the items that finish, returning the completion
-//count and a potential error.  If there are no outstanding requests it will
-//return 0, nil
+/* WaitAny will block until a request finishes and will populate a
+   buffer of request IDs with the items that finish, returning the completion
+   count and a potential error.  If there are no outstanding requests it will
+   return 0, nil
+*/
 func (a *AIO) WaitAny(completed []RequestId) (int, error) {
 	a.dmtx.Lock()
 	l := len(a.active)
@@ -363,7 +364,7 @@ func (a *AIO) idDone(id RequestId) (bool, error) {
 	return r.done, nil
 }
 
-//WaitFor will block until the given RequestId is done
+// WaitFor will block until the given RequestId is done
 func (a *AIO) WaitFor(id RequestId) (int, error) {
 	for {
 		//check if its ready
@@ -398,8 +399,8 @@ func (a *AIO) WaitFor(id RequestId) (int, error) {
 	return a.ack(id)
 }
 
-//getNextReady will retrieve the next available callback pointer for use
-//if no callback pointers are available, it blocks and waits for one
+// getNextReady will retrieve the next available callback pointer for use
+// if no callback pointers are available, it blocks and waits for one
 func (a *AIO) getNextReady() (*aiocb, error) {
 	for {
 		a.dmtx.Lock()
@@ -420,8 +421,8 @@ func (a *AIO) getNextReady() (*aiocb, error) {
 	return nil, ErrWhatTheHell
 }
 
-//Write will submit the bytes for writting at the end of the file,
-//the buffer CANNOT change before the write completes, this is ASYNC!
+// Write will submit the bytes for writting at the end of the file,
+// the buffer CANNOT change before the write completes, this is ASYNC!
 func (a *AIO) Write(b []byte) (RequestId, error) {
 	id, err := a.writeAt(b, a.end)
 	if err != nil {
@@ -431,7 +432,7 @@ func (a *AIO) Write(b []byte) (RequestId, error) {
 	return id, nil
 }
 
-//WriteAt will write at a specific file offset
+// WriteAt will write at a specific file offset
 func (a *AIO) WriteAt(b []byte, offset int64) (RequestId, error) {
 	id, err := a.writeAt(b, offset)
 	if err != nil {
@@ -488,7 +489,7 @@ func (a *AIO) writeAt(b []byte, offset int64) (RequestId, error) {
 	return id, nil
 }
 
-//ReadAt reads data from the file at a specific offset
+// ReadAt reads data from the file at a specific offset
 func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
 	if len(b) <= 0 {
 		return 0, ErrInvalidBuffer
@@ -530,8 +531,8 @@ func (a *AIO) ReadAt(b []byte, offset int64) (RequestId, error) {
 	return id, nil
 }
 
-//Ack acknowledges that we have accepted a finished result ID
-//if the request is not done, an error is returned
+// Ack acknowledges that we have accepted a finished result ID
+// if the request is not done, an error is returned
 func (a *AIO) ack(id RequestId) (int, error) {
 	a.dmtx.Lock()
 	defer a.dmtx.Unlock()
@@ -548,10 +549,10 @@ func (a *AIO) ack(id RequestId) (int, error) {
 	return 0, ErrNotDone
 }
 
-//Flush will wait for all submitted jobs to finish and then flush
-//the file descriptor.  Because the Linux kernel does not actually
-//support Flush via the AIO interface we just issue a plain old flush
-//via userland.  No async here.  Flush DOES NOT ack outstanding requests
+// Flush will wait for all submitted jobs to finish and then flush
+// the file descriptor.  Because the Linux kernel does not actually
+// support Flush via the AIO interface we just issue a plain old flush
+// via userland.  No async here.  Flush DOES NOT ack outstanding requests
 func (a *AIO) Flush() error {
 	//we want to hold the wait mutex throghout all of this
 	//this ensures we have TOTAL exclusivity over the file IO
@@ -563,8 +564,8 @@ func (a *AIO) Flush() error {
 	return a.f.Sync()
 }
 
-//Truncate will wait for all submitted jobs to finish and then trunctate the
-//file to the designated size.
+// Truncate will wait for all submitted jobs to finish and then trunctate the
+// file to the designated size.
 func (a *AIO) Truncate(sz int64) error {
 	//we want to hold the wait mutex throghout all of this
 	//this ensures we have TOTAL exclusivity over the file IO
@@ -576,10 +577,10 @@ func (a *AIO) Truncate(sz int64) error {
 	return a.f.Truncate(sz)
 }
 
-//FD hands back the underlying *os.File pointer
-//This is NOT A COPY, so do not do close or do anything
-//crazy with it.  This is purely a convienence method, use
-//at your own peril
+// FD hands back the underlying *os.File pointer
+// This is NOT A COPY, so do not do close it or do anything
+// crazy with it.  This is purely a convienence method, use
+// at your own peril
 func (a *AIO) FD() *os.File {
 	return a.f
 }
