@@ -301,7 +301,7 @@ func (a *AIO) wait(to timespec, completed []RequestId) (int, error) {
 func (a *AIO) submit(cbp *aiocb) error {
 	x, _, ret := syscall.Syscall(syscall.SYS_IO_SUBMIT, uintptr(a.ctx), 1, uintptr(unsafe.Pointer(&cbp)))
 	if ret != 0 {
-		errLookup(ret)
+		return errLookup(ret)
 	}
 	if x != 1 {
 		return ErrIoSubFail
