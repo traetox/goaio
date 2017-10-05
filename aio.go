@@ -109,16 +109,20 @@ func NewAIO(name string, flag int, perm os.FileMode) (*AIO, error) {
 
 // NewAIOExt opens a file with the appropriate flags and permissions and positions the file index at the end of the file with additional configuration options
 func NewAIOExt(name string, cfg AIOExtConfig, flag int, perm os.FileMode) (*AIO, error) {
+	//try to open the file
+	fio, err := os.OpenFile(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	return New(fio, cfg)
+}
+
+// New creates a file aio with the given file handle
+func New(fio *os.File, cfg AIOExtConfig) (*AIO, error) {
 	var err error
 	var ctx aio_context
 
 	if err := fixupConfig(&cfg); err != nil {
-		return nil, err
-	}
-
-	//try to open the file
-	fio, err := os.OpenFile(name, flag, perm)
-	if err != nil {
 		return nil, err
 	}
 
