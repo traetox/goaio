@@ -24,7 +24,7 @@ const (
 )
 
 var (
-	ErrInitFail          = errors.New("Vailed to initailize AIO context")
+	ErrInitFail          = errors.New("Failed to initailize AIO context")
 	ErrNotInit           = errors.New("Not initialized")
 	ErrDestroy           = errors.New("Failed to tear down context")
 	ErrIoSubFail         = errors.New("Failed to submit new IO request")
