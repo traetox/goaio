@@ -281,8 +281,13 @@ func (a *AIO) wait(to timespec, completed []RequestId) (int, error) {
 		return 0, nil
 	}
 
+	toPtr := uintptr(unsafe.Pointer(&to))
+	if to == zeroTime {
+		toPtr = 0
+	}
+
 	//wait for at least one active request to complete
-	x, _, ret := syscall.Syscall6(syscall.SYS_IO_GETEVENTS, uintptr(a.ctx), uintptr(1), uintptr(len(a.active)), uintptr(unsafe.Pointer(&a.evt[0])), uintptr(unsafe.Pointer(&to)), uintptr(0))
+	x, _, ret := syscall.Syscall6(syscall.SYS_IO_GETEVENTS, uintptr(a.ctx), uintptr(1), uintptr(len(a.active)), uintptr(unsafe.Pointer(&a.evt[0])), toPtr, uintptr(0))
 	if ret != 0 {
 		return 0, errLookup(ret)
 	}
